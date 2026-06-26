@@ -1,0 +1,39 @@
+{
+  "roc_auc": 0.6807434713258811,
+  "optimal_threshold": 0.46666159085700987,
+  "default_threshold": 0.5,
+  "test_size": 20354,
+  "classification_report": {
+    "未再入院": {
+      "precision": 0.927242092364249,
+      "recall": 0.6695238621910081,
+      "f1-score": 0.7775850995504174,
+      "support": 18083.0
+    },
+    "30天內再入院": {
+      "precision": 0.18103330135672194,
+      "recall": 0.5816820783795684,
+      "f1-score": 0.276128762541806,
+      "support": 2271.0
+    },
+    "accuracy": 0.6597229045887786,
+    "macro avg": {
+      "precision": 0.5541376968604855,
+      "recall": 0.6256029702852883,
+      "f1-score": 0.5268569310461118,
+      "support": 20354.0
+    },
+    "weighted avg": {
+      "precision": 0.8439837566868346,
+      "recall": 0.6597229045887786,
+      "f1-score": 0.7216350483886529,
+      "support": 20354.0
+    }
+  },
+  "model_name": "lightgbm",
+  "feature_version": "v2",
+  "feature_count": 20,
+  "positive_rate": 0.11159915885462728,
+  "baseline_roc_auc": 0.5738175159003717,
+  "improvement": 0.10692595542550942
+}

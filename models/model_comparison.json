@@ -1,0 +1,133 @@
+{
+  "feature_count": 20,
+  "numeric_features": [
+    "time_in_hospital",
+    "num_lab_procedures",
+    "num_procedures",
+    "num_medications",
+    "number_outpatient",
+    "number_emergency",
+    "number_inpatient",
+    "number_diagnoses",
+    "admission_type_id",
+    "discharge_disposition_id",
+    "admission_source_id"
+  ],
+  "categorical_features": [
+    "age",
+    "gender",
+    "race",
+    "max_glu_serum",
+    "A1Cresult",
+    "change",
+    "diabetesMed",
+    "metformin",
+    "insulin"
+  ],
+  "results": [
+    {
+      "roc_auc": 0.6521909966843286,
+      "optimal_threshold": 0.225,
+      "default_threshold": 0.5,
+      "test_size": 20354,
+      "classification_report": {
+        "未再入院": {
+          "precision": 0.8945145557846046,
+          "recall": 0.9838522369075927,
+          "f1-score": 0.937058885494575,
+          "support": 18083.0
+        },
+        "30天內再入院": {
+          "precision": 0.3720430107526882,
+          "recall": 0.07617789520035227,
+          "f1-score": 0.12646198830409358,
+          "support": 2271.0
+        },
+        "accuracy": 0.8825783629753365,
+        "macro avg": {
+          "precision": 0.6332787832686464,
+          "recall": 0.5300150660539725,
+          "f1-score": 0.5317604368993343,
+          "support": 20354.0
+        },
+        "weighted avg": {
+          "precision": 0.8362197302580506,
+          "recall": 0.8825783629753365,
+          "f1-score": 0.8466164391194356,
+          "support": 20354.0
+        }
+      },
+      "model_name": "random_forest"
+    },
+    {
+      "roc_auc": 0.6785637746081703,
+      "optimal_threshold": 0.47692906856536865,
+      "default_threshold": 0.5,
+      "test_size": 20354,
+      "classification_report": {
+        "未再入院": {
+          "precision": 0.9278715706964125,
+          "recall": 0.680805176132279,
+          "f1-score": 0.7853656980638576,
+          "support": 18083.0
+        },
+        "30天內再入院": {
+          "precision": 0.18543607112616428,
+          "recall": 0.5785997357992074,
+          "f1-score": 0.2808592497595383,
+          "support": 2271.0
+        },
+        "accuracy": 0.6694015918247027,
+        "macro avg": {
+          "precision": 0.5566538209112883,
+          "recall": 0.6297024559657431,
+          "f1-score": 0.5331124739116979,
+          "support": 20354.0
+        },
+        "weighted avg": {
+          "precision": 0.8450342404653015,
+          "recall": 0.6694015918247027,
+          "f1-score": 0.7290753303671341,
+          "support": 20354.0
+        }
+      },
+      "model_name": "xgboost"
+    },
+    {
+      "roc_auc": 0.6807434713258811,
+      "optimal_threshold": 0.46666159085700987,
+      "default_threshold": 0.5,
+      "test_size": 20354,
+      "classification_report": {
+        "未再入院": {
+          "precision": 0.927242092364249,
+          "recall": 0.6695238621910081,
+          "f1-score": 0.7775850995504174,
+          "support": 18083.0
+        },
+        "30天內再入院": {
+          "precision": 0.18103330135672194,
+          "recall": 0.5816820783795684,
+          "f1-score": 0.276128762541806,
+          "support": 2271.0
+        },
+        "accuracy": 0.6597229045887786,
+        "macro avg": {
+          "precision": 0.5541376968604855,
+          "recall": 0.6256029702852883,
+          "f1-score": 0.5268569310461118,
+          "support": 20354.0
+        },
+        "weighted avg": {
+          "precision": 0.8439837566868346,
+          "recall": 0.6597229045887786,
+          "f1-score": 0.7216350483886529,
+          "support": 20354.0
+        }
+      },
+      "model_name": "lightgbm"
+    }
+  ],
+  "best_model": "lightgbm",
+  "best_roc_auc": 0.6807434713258811
+}

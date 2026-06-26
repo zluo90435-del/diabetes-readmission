@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+models/reports/
+.streamlit/secrets.toml
+diabetes_model.pkl
+*.pkl.bak
+
+# 部署時請保留以下檔案並提交 Git：
+# !data/diabetic_data.csv
+# !models/diabetes_pipeline.pkl
+# !models/metrics.json
