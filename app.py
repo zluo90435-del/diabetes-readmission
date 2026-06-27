@@ -21,6 +21,7 @@ from src.pipeline import (
     load_pipeline,
     predict_readmission_proba,
 )
+from src.what_if import WHAT_IF_SCENARIOS, apply_what_if_overrides, find_scenario
 
 
 st.set_page_config(page_title="糖尿病患再入院風險預測系統", layout="wide")
@@ -45,6 +46,142 @@ def get_metrics():
     return load_metrics(METRICS_PATH)
 
 
+def build_patient_row(
+    *,
+    time_in_hospital,
+    num_lab_procedures,
+    num_procedures,
+    num_medications,
+    number_outpatient,
+    number_emergency,
+    number_inpatient,
+    number_diagnoses,
+    admission_type,
+    discharge_disposition,
+    admission_source,
+    age,
+    gender,
+    race,
+    max_glu,
+    a1c_status,
+    change_status,
+    diabetes_med,
+    metformin,
+    insulin,
+) -> dict:
+    return {
+        "time_in_hospital": time_in_hospital,
+        "num_lab_procedures": num_lab_procedures,
+        "num_procedures": num_procedures,
+        "num_medications": num_medications,
+        "number_outpatient": number_outpatient,
+        "number_emergency": number_emergency,
+        "number_inpatient": number_inpatient,
+        "number_diagnoses": num_diagnoses,
+        "admission_type_id": ADMISSION_TYPE_OPTIONS[admission_type],
+        "discharge_disposition_id": DISCHARGE_DISPOSITION_OPTIONS[discharge_disposition],
+        "admission_source_id": ADMISSION_SOURCE_OPTIONS[admission_source],
+        "age": age,
+        "gender": GENDER_OPTIONS[gender],
+        "race": RACE_OPTIONS[race],
+        "max_glu_serum": MAX_GLU_OPTIONS[max_glu],
+        "A1Cresult": A1C_OPTIONS[a1c_status],
+        "change": CHANGE_OPTIONS[change_status],
+        "diabetesMed": "Yes" if diabetes_med else "No",
+        "metformin": MEDICATION_OPTIONS[metformin],
+        "insulin": MEDICATION_OPTIONS[insulin],
+    }
+
+
+def render_gauge(risk_percentage: float, threshold_percentage: float) -> go.Figure:
+    return go.Figure(
+        go.Indicator(
+            mode="gauge+number",
+            value=risk_percentage,
+            domain={"x": [0, 1], "y": [0, 1]},
+            title={"text": "30 天內再入院風險機率 (%)", "font": {"size": 18}},
+            gauge={
+                "axis": {"range": [None, 100], "tickwidth": 1, "tickcolor": "darkblue"},
+                "bar": {"color": "black"},
+                "bgcolor": "white",
+                "borderwidth": 2,
+                "bordercolor": "gray",
+                "steps": [
+                    {"range": [0, threshold_percentage * 0.7], "color": "#2ecc71"},
+                    {"range": [threshold_percentage * 0.7, threshold_percentage * 1.3], "color": "#f1c40f"},
+                    {"range": [threshold_percentage * 1.3, 100], "color": "#e74c3c"},
+                ],
+            },
+        )
+    )
+
+
+def render_what_if_chart(
+    baseline_pct: float,
+    scenario_pct: float,
+    scenario_label: str,
+    threshold_pct: float,
+) -> go.Figure:
+    delta = round(scenario_pct - baseline_pct, 2)
+    colors = ["#3498db", "#2ecc71" if scenario_pct < baseline_pct else "#e74c3c"]
+
+    fig = go.Figure(
+        data=[
+            go.Bar(
+                name="調藥前（目前）",
+                x=["30 天再入院風險 (%)"],
+                y=[baseline_pct],
+                marker_color=colors[0],
+                text=[f"{baseline_pct}%"],
+                textposition="outside",
+            ),
+            go.Bar(
+                name=f"調藥後（{scenario_label}）",
+                x=["30 天再入院風險 (%)"],
+                y=[scenario_pct],
+                marker_color=colors[1],
+                text=[f"{scenario_pct}%"],
+                textposition="outside",
+            ),
+        ]
+    )
+    fig.add_hline(
+        y=threshold_pct,
+        line_dash="dash",
+        line_color="#e67e22",
+        annotation_text=f"高風險門檻 {threshold_pct}%",
+    )
+    fig.update_layout(
+        title=f"What-If 模擬：風險變化 {delta:+.2f} 個百分點",
+        barmode="group",
+        yaxis={"range": [0, max(baseline_pct, scenario_pct, threshold_pct) * 1.25 + 5]},
+        showlegend=True,
+        height=420,
+    )
+    return fig
+
+
+def render_risk_summary(risk_proba: float, risk_threshold: float) -> None:
+    risk_percentage = round(risk_proba * 100, 2)
+    threshold_percentage = round(risk_threshold * 100, 2)
+
+    if risk_proba >= risk_threshold:
+        st.error(f"⚠️ **高風險警示（機率：{risk_percentage}%）**")
+        st.warning(
+            "【優化建議】該病患再入院風險偏高。"
+            "建議個案管理師在出院後第 3 天與第 14 天安排電話追蹤，"
+            "並確認其出院後的用藥順從性。"
+        )
+    else:
+        st.success(f"✅ **低風險通過（機率：{risk_percentage}%）**")
+        st.info(
+            "【優化建議】該病患再入院風險較低，"
+            "請維持常規出院衛教與常規回診預約即可。"
+        )
+
+    st.caption(f"高風險門檻依驗證集 Youden index 設定為 {threshold_percentage}%")
+
+
 with st.spinner("正在載入 AI 模型，首次約需 10–30 秒，請稍候..."):
     pipeline = get_pipeline()
     metrics = get_metrics()
@@ -57,6 +194,7 @@ if pipeline is None:
     st.stop()
 
 risk_threshold = metrics["optimal_threshold"] if metrics else 0.5
+threshold_percentage = round(risk_threshold * 100, 2)
 
 st.divider()
 st.subheader("📋 患者臨床資料輸入")
@@ -102,85 +240,89 @@ with tab_meds:
 st.divider()
 
 if st.button("🔮 開始評估再入院風險", type="primary"):
-    patient_data = pd.DataFrame(
-        [
-            {
-                "time_in_hospital": time_in_hospital,
-                "num_lab_procedures": num_lab_procedures,
-                "num_procedures": num_procedures,
-                "num_medications": num_medications,
-                "number_outpatient": number_outpatient,
-                "number_emergency": number_emergency,
-                "number_inpatient": number_inpatient,
-                "number_diagnoses": num_diagnoses,
-                "admission_type_id": ADMISSION_TYPE_OPTIONS[admission_type],
-                "discharge_disposition_id": DISCHARGE_DISPOSITION_OPTIONS[discharge_disposition],
-                "admission_source_id": ADMISSION_SOURCE_OPTIONS[admission_source],
-                "age": age,
-                "gender": GENDER_OPTIONS[gender],
-                "race": RACE_OPTIONS[race],
-                "max_glu_serum": MAX_GLU_OPTIONS[max_glu],
-                "A1Cresult": A1C_OPTIONS[a1c_status],
-                "change": CHANGE_OPTIONS[change_status],
-                "diabetesMed": "Yes" if diabetes_med else "No",
-                "metformin": MEDICATION_OPTIONS[metformin],
-                "insulin": MEDICATION_OPTIONS[insulin],
-            }
-        ]
+    st.session_state.patient_row = build_patient_row(
+        time_in_hospital=time_in_hospital,
+        num_lab_procedures=num_lab_procedures,
+        num_procedures=num_procedures,
+        num_medications=num_medications,
+        number_outpatient=number_outpatient,
+        number_emergency=number_emergency,
+        number_inpatient=number_inpatient,
+        number_diagnoses=num_diagnoses,
+        admission_type=admission_type,
+        discharge_disposition=discharge_disposition,
+        admission_source=admission_source,
+        age=age,
+        gender=gender,
+        race=race,
+        max_glu=max_glu,
+        a1c_status=a1c_status,
+        change_status=change_status,
+        diabetes_med=diabetes_med,
+        metformin=metformin,
+        insulin=insulin,
     )
+    st.session_state.selected_scenario_id = None
+
+if "patient_row" in st.session_state:
+    patient_data = pd.DataFrame([st.session_state.patient_row])
 
     try:
-        risk_proba = predict_readmission_proba(pipeline, patient_data)
+        baseline_proba = predict_readmission_proba(pipeline, patient_data)
         explanations = explain_prediction(pipeline, patient_data, top_k=3)
     except Exception as exc:
         st.error(f"預測失敗：{exc}")
         st.stop()
 
-    risk_percentage = round(risk_proba * 100, 2)
-    threshold_percentage = round(risk_threshold * 100, 2)
+    baseline_pct = round(baseline_proba * 100, 2)
 
     st.subheader("📊 AI 風險評估報告")
-
-    fig = go.Figure(
-        go.Indicator(
-            mode="gauge+number",
-            value=risk_percentage,
-            domain={"x": [0, 1], "y": [0, 1]},
-            title={"text": "30 天內再入院風險機率 (%)", "font": {"size": 18}},
-            gauge={
-                "axis": {"range": [None, 100], "tickwidth": 1, "tickcolor": "darkblue"},
-                "bar": {"color": "black"},
-                "bgcolor": "white",
-                "borderwidth": 2,
-                "bordercolor": "gray",
-                "steps": [
-                    {"range": [0, threshold_percentage * 0.7], "color": "#2ecc71"},
-                    {"range": [threshold_percentage * 0.7, threshold_percentage * 1.3], "color": "#f1c40f"},
-                    {"range": [threshold_percentage * 1.3, 100], "color": "#e74c3c"},
-                ],
-            },
-        )
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    if risk_proba >= risk_threshold:
-        st.error(f"⚠️ **高風險警示（機率：{risk_percentage}%）**")
-        st.warning(
-            "【優化建議】該病患再入院風險偏高。"
-            "建議個案管理師在出院後第 3 天與第 14 天安排電話追蹤，"
-            "並確認其出院後的用藥順從性。"
-        )
-    else:
-        st.success(f"✅ **低風險通過（機率：{risk_percentage}%）**")
-        st.info(
-            "【優化建議】該病患再入院風險較低，"
-            "請維持常規出院衛教與常規回診預約即可。"
-        )
-
-    st.caption(f"高風險門檻依驗證集 Youden index 設定為 {threshold_percentage}%")
+    st.plotly_chart(render_gauge(baseline_pct, threshold_percentage), use_container_width=True)
+    render_risk_summary(baseline_proba, risk_threshold)
 
     st.divider()
-    st.subheader("🔍 關鍵風險因子分析")
+    st.subheader("🔬 What-If 假設分析（調藥前 vs 調藥後）")
+    st.write(
+        "模擬「若採取以下醫療介入，30 天再入院風險可能如何變化」。"
+        "點選快捷情境即可在同一圖表上對比調藥前後機率。"
+    )
+
+    scenario_cols = st.columns(len(WHAT_IF_SCENARIOS))
+    for index, scenario in enumerate(WHAT_IF_SCENARIOS):
+        with scenario_cols[index]:
+            if st.button(scenario["label"], key=f"what_if_{scenario['id']}", use_container_width=True):
+                st.session_state.selected_scenario_id = scenario["id"]
+
+    selected = find_scenario(st.session_state.get("selected_scenario_id", ""))
+    if selected:
+        scenario_row = apply_what_if_overrides(st.session_state.patient_row, selected["overrides"])
+        scenario_data = pd.DataFrame([scenario_row])
+        scenario_proba = predict_readmission_proba(pipeline, scenario_data)
+        scenario_pct = round(scenario_proba * 100, 2)
+        delta = round(scenario_pct - baseline_pct, 2)
+
+        st.caption(selected["hint"])
+        st.plotly_chart(
+            render_what_if_chart(
+                baseline_pct,
+                scenario_pct,
+                selected["label"],
+                threshold_percentage,
+            ),
+            use_container_width=True,
+        )
+
+        if delta < 0:
+            st.success(f"✅ 此介入預估可降低再入院風險 **{abs(delta):.2f}** 個百分點。")
+        elif delta > 0:
+            st.warning(f"⚠️ 此情境下模型預估風險上升 **{delta:.2f}** 個百分點，請綜合臨床判斷。")
+        else:
+            st.info("ℹ️ 此介入對模型預估風險影響不大。")
+    else:
+        st.info("👆 請點選上方快捷鍵，查看調藥前後的風險對比。")
+
+    st.divider()
+    st.subheader("🔍 關鍵風險因子分析（目前狀態）")
     st.write("以下為 SHAP 分析後，對本次預測影響最大的臨床特徵：")
 
     for item in explanations:
