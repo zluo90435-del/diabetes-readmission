@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+from datetime import datetime
 
 from src.config import METRICS_PATH, MODEL_PATH
 from src.ui_options import (
@@ -22,6 +23,7 @@ from src.pipeline import (
     predict_readmission_proba,
 )
 from src.what_if import WHAT_IF_SCENARIOS, apply_what_if_overrides, find_scenario
+from src.pdf_report import generate_what_if_pdf
 
 
 st.set_page_config(page_title="糖尿病患再入院風險預測系統", layout="wide")
@@ -318,6 +320,27 @@ if "patient_row" in st.session_state:
             st.warning(f"⚠️ 此情境下模型預估風險上升 **{delta:.2f}** 個百分點，請綜合臨床判斷。")
         else:
             st.info("ℹ️ 此介入對模型預估風險影響不大。")
+
+        try:
+            pdf_bytes = generate_what_if_pdf(
+                patient_row=st.session_state.patient_row,
+                baseline_pct=baseline_pct,
+                scenario_pct=scenario_pct,
+                scenario_label=selected["label"],
+                scenario_hint=selected["hint"],
+                threshold_pct=threshold_percentage,
+                explanations=explanations,
+                model_name=metrics.get("model_name") if metrics else None,
+            )
+            st.download_button(
+                label="📄 匯出 What-If PDF 報告",
+                data=pdf_bytes,
+                file_name=f"what_if_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                mime="application/pdf",
+                type="secondary",
+            )
+        except Exception as exc:
+            st.caption(f"PDF 匯出暫不可用：{exc}")
     else:
         st.info("👆 請點選上方快捷鍵，查看調藥前後的風險對比。")
 
