@@ -1,32 +1,43 @@
 from __future__ import annotations
 
+import urllib.request
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
+import img2pdf
 import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
 
 from src.config import FEATURE_LABELS, PROJECT_ROOT
 
+FONT_DIR = PROJECT_ROOT / "assets" / "fonts"
+FONT_FILE = FONT_DIR / "NotoSansCJKtc-Regular.otf"
+FONT_URL = (
+    "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/OTF/TraditionalChinese/"
+    "NotoSansCJKtc-Regular.otf"
+)
 FONT_CANDIDATES = [
-    PROJECT_ROOT / "assets" / "fonts" / "NotoSansCJKtc-Regular.otf",
+    FONT_FILE,
     Path("C:/Windows/Fonts/msjh.ttc"),
-    Path("C:/Windows/Fonts/msjhbd.ttc"),
     Path("C:/Windows/Fonts/msyh.ttc"),
+    Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+    Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
 ]
 
 
-def _configure_chinese_font() -> None:
-    for font_path in FONT_CANDIDATES:
-        if font_path.exists():
-            fm.fontManager.addfont(str(font_path))
-            font_name = fm.FontProperties(fname=str(font_path)).get_name()
-            plt.rcParams["font.sans-serif"] = [font_name, "DejaVu Sans"]
-            plt.rcParams["axes.unicode_minus"] = False
-            return
-    plt.rcParams["axes.unicode_minus"] = False
+def _ensure_font_path() -> Path:
+    for candidate in FONT_CANDIDATES:
+        if candidate.exists():
+            return candidate
+
+    FONT_DIR.mkdir(parents=True, exist_ok=True)
+    urllib.request.urlretrieve(FONT_URL, FONT_FILE)
+    return FONT_FILE
+
+
+def _font_prop(font_path: Path) -> fm.FontProperties:
+    return fm.FontProperties(fname=str(font_path))
 
 
 def _format_delta_text(delta: float) -> str:
@@ -37,9 +48,17 @@ def _format_delta_text(delta: float) -> str:
     return "此介入對模型預估風險影響不大。"
 
 
-def _draw_summary_page(
-    pdf: PdfPages,
+def _figure_to_png(fig: plt.Figure) -> bytes:
+    buffer = BytesIO()
+    fig.savefig(buffer, format="png", dpi=160, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def _render_summary_png(
     *,
+    font_path: Path,
     baseline_pct: float,
     scenario_pct: float,
     scenario_label: str,
@@ -49,7 +68,8 @@ def _draw_summary_page(
     patient_row: dict,
     explanations: list[dict],
     model_name: str | None,
-) -> None:
+) -> bytes:
+    fp = _font_prop(font_path)
     fig = plt.figure(figsize=(8.27, 11.69))
     fig.patch.set_facecolor("white")
     y = 0.94
@@ -57,7 +77,15 @@ def _draw_summary_page(
 
     def write_line(text: str, size: int = 11, weight: str = "normal") -> None:
         nonlocal y
-        fig.text(0.08, y, text, fontsize=size, fontweight=weight)
+        fig.text(
+            0.08,
+            y,
+            text,
+            fontsize=size,
+            fontweight=weight,
+            fontproperties=fp,
+            wrap=True,
+        )
         y -= line_height
 
     write_line("糖尿病患 30 天內再入院風險評估報告", size=16, weight="bold")
@@ -108,31 +136,48 @@ def _draw_summary_page(
         size=9,
     )
 
-    pdf.savefig(fig, bbox_inches="tight")
-    plt.close(fig)
+    return _figure_to_png(fig)
 
 
-def _draw_chart_page(
-    pdf: PdfPages,
+def _render_chart_png(
     *,
+    font_path: Path,
     baseline_pct: float,
     scenario_pct: float,
     scenario_label: str,
     threshold_pct: float,
     delta: float,
-) -> None:
+) -> bytes:
+    fp = _font_prop(font_path)
+    plt.rcParams["axes.unicode_minus"] = False
+
     fig, ax = plt.subplots(figsize=(8.27, 6))
     labels = ["調藥前（目前）", f"調藥後（{scenario_label}）"]
     values = [baseline_pct, scenario_pct]
     colors = ["#3498db", "#2ecc71" if scenario_pct < baseline_pct else "#e74c3c"]
 
     bars = ax.bar(labels, values, color=colors, width=0.55)
-    ax.axhline(threshold_pct, color="#e67e22", linestyle="--", linewidth=1.5, label="高風險門檻")
-    ax.set_ylabel("30 天再入院風險 (%)")
-    ax.set_title(f"What-If 模擬：風險變化 {delta:+.2f} 個百分點")
+    ax.axhline(
+        threshold_pct,
+        color="#e67e22",
+        linestyle="--",
+        linewidth=1.5,
+        label="高風險門檻",
+    )
+
+    ax.set_ylabel("30 天再入院風險 (%)", fontproperties=fp)
+    ax.set_title(
+        f"What-If 模擬：風險變化 {delta:+.2f} 個百分點",
+        fontproperties=fp,
+    )
     ax.set_ylim(0, max(values + [threshold_pct]) * 1.25 + 5)
-    ax.legend()
+    ax.legend(prop=fp)
     ax.grid(axis="y", alpha=0.25)
+
+    for label in ax.get_xticklabels():
+        label.set_fontproperties(fp)
+    for label in ax.get_yticklabels():
+        label.set_fontproperties(fp)
 
     for bar, value in zip(bars, values, strict=False):
         ax.text(
@@ -142,10 +187,10 @@ def _draw_chart_page(
             ha="center",
             va="bottom",
             fontsize=11,
+            fontproperties=fp,
         )
 
-    pdf.savefig(fig, bbox_inches="tight")
-    plt.close(fig)
+    return _figure_to_png(fig)
 
 
 def generate_what_if_pdf(
@@ -159,31 +204,28 @@ def generate_what_if_pdf(
     explanations: list[dict],
     model_name: str | None = None,
 ) -> bytes:
-    _configure_chinese_font()
+    font_path = _ensure_font_path()
     delta = round(scenario_pct - baseline_pct, 2)
 
-    buffer = BytesIO()
-    with PdfPages(buffer) as pdf:
-        _draw_summary_page(
-            pdf,
-            baseline_pct=baseline_pct,
-            scenario_pct=scenario_pct,
-            scenario_label=scenario_label,
-            scenario_hint=scenario_hint,
-            threshold_pct=threshold_pct,
-            delta=delta,
-            patient_row=patient_row,
-            explanations=explanations,
-            model_name=model_name,
-        )
-        _draw_chart_page(
-            pdf,
-            baseline_pct=baseline_pct,
-            scenario_pct=scenario_pct,
-            scenario_label=scenario_label,
-            threshold_pct=threshold_pct,
-            delta=delta,
-        )
+    summary_png = _render_summary_png(
+        font_path=font_path,
+        baseline_pct=baseline_pct,
+        scenario_pct=scenario_pct,
+        scenario_label=scenario_label,
+        scenario_hint=scenario_hint,
+        threshold_pct=threshold_pct,
+        delta=delta,
+        patient_row=patient_row,
+        explanations=explanations,
+        model_name=model_name,
+    )
+    chart_png = _render_chart_png(
+        font_path=font_path,
+        baseline_pct=baseline_pct,
+        scenario_pct=scenario_pct,
+        scenario_label=scenario_label,
+        threshold_pct=threshold_pct,
+        delta=delta,
+    )
 
-    buffer.seek(0)
-    return buffer.getvalue()
+    return img2pdf.convert(summary_png, chart_png)

@@ -1,7 +1,9 @@
+import base64
+
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime
 
 from src.config import METRICS_PATH, MODEL_PATH
 from src.ui_options import (
@@ -163,6 +165,41 @@ def render_what_if_chart(
     return fig
 
 
+def _what_if_pdf_cache_key(
+    scenario_id: str,
+    patient_row: dict,
+    baseline_pct: float,
+    scenario_pct: float,
+) -> tuple:
+    return (
+        scenario_id,
+        baseline_pct,
+        scenario_pct,
+        tuple(sorted(patient_row.items())),
+    )
+
+
+def _clear_what_if_pdf_cache() -> None:
+    st.session_state.pop("what_if_pdf_key", None)
+    st.session_state.pop("what_if_pdf_bytes", None)
+
+
+def render_pdf_download_link(pdf_bytes: bytes, filename: str) -> None:
+    b64 = base64.b64encode(pdf_bytes).decode()
+    components.html(
+        f"""
+        <a href="data:application/pdf;base64,{b64}" download="{filename}"
+           style="display:inline-block;padding:0.45rem 1rem;background:#f0f2f6;
+                  border:1px solid rgba(49,51,63,0.2);border-radius:0.5rem;
+                  text-decoration:none;color:#31333f;font-family:sans-serif;
+                  font-size:0.875rem;">
+          📄 下載 PDF 報告
+        </a>
+        """,
+        height=48,
+    )
+
+
 def render_risk_summary(risk_proba: float, risk_threshold: float) -> None:
     risk_percentage = round(risk_proba * 100, 2)
     threshold_percentage = round(risk_threshold * 100, 2)
@@ -265,6 +302,7 @@ if st.button("🔮 開始評估再入院風險", type="primary"):
         insulin=insulin,
     )
     st.session_state.selected_scenario_id = None
+    _clear_what_if_pdf_cache()
 
 if "patient_row" in st.session_state:
     patient_data = pd.DataFrame([st.session_state.patient_row])
@@ -294,6 +332,7 @@ if "patient_row" in st.session_state:
         with scenario_cols[index]:
             if st.button(scenario["label"], key=f"what_if_{scenario['id']}", use_container_width=True):
                 st.session_state.selected_scenario_id = scenario["id"]
+                _clear_what_if_pdf_cache()
 
     selected = find_scenario(st.session_state.get("selected_scenario_id", ""))
     if selected:
@@ -321,26 +360,47 @@ if "patient_row" in st.session_state:
         else:
             st.info("ℹ️ 此介入對模型預估風險影響不大。")
 
-        try:
-            pdf_bytes = generate_what_if_pdf(
-                patient_row=st.session_state.patient_row,
-                baseline_pct=baseline_pct,
-                scenario_pct=scenario_pct,
-                scenario_label=selected["label"],
-                scenario_hint=selected["hint"],
-                threshold_pct=threshold_percentage,
-                explanations=explanations,
-                model_name=metrics.get("model_name") if metrics else None,
-            )
-            st.download_button(
-                label="📄 匯出 What-If PDF 報告",
-                data=pdf_bytes,
-                file_name=f"what_if_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                mime="application/pdf",
-                type="secondary",
-            )
-        except Exception as exc:
-            st.caption(f"PDF 匯出暫不可用：{exc}")
+        pdf_cache_key = _what_if_pdf_cache_key(
+            selected["id"],
+            st.session_state.patient_row,
+            baseline_pct,
+            scenario_pct,
+        )
+        pdf_ready = (
+            st.session_state.get("what_if_pdf_key") == pdf_cache_key
+            and st.session_state.get("what_if_pdf_bytes")
+        )
+
+        st.caption("PDF 報告匯出")
+        gen_col, dl_col = st.columns([1, 1])
+        with gen_col:
+            if st.button("📄 產生 PDF 報告", key="generate_what_if_pdf", type="secondary"):
+                try:
+                    with st.spinner("正在產生 PDF 報告..."):
+                        st.session_state.what_if_pdf_bytes = generate_what_if_pdf(
+                            patient_row=st.session_state.patient_row,
+                            baseline_pct=baseline_pct,
+                            scenario_pct=scenario_pct,
+                            scenario_label=selected["label"],
+                            scenario_hint=selected["hint"],
+                            threshold_pct=threshold_percentage,
+                            explanations=explanations,
+                            model_name=metrics.get("model_name") if metrics else None,
+                        )
+                    st.session_state.what_if_pdf_key = pdf_cache_key
+                    pdf_ready = True
+                except Exception as exc:
+                    _clear_what_if_pdf_cache()
+                    st.error(f"PDF 產生失敗：{exc}")
+
+        with dl_col:
+            if pdf_ready:
+                render_pdf_download_link(
+                    st.session_state.what_if_pdf_bytes,
+                    f"what_if_report_{selected['id']}.pdf",
+                )
+            else:
+                st.caption("請先按「產生 PDF 報告」，完成後再下載。")
     else:
         st.info("👆 請點選上方快捷鍵，查看調藥前後的風險對比。")
 
